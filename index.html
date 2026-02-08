@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VPP Unlocker</title>
+  <style>
+    :root {
+      --bg: #0f0f12;
+      --surface: #1a1a20;
+      --border: #2a2a32;
+      --text: #e4e4e7;
+      --muted: #71717a;
+      --accent: #22c55e;
+      --accent-hover: #16a34a;
+      --error: #ef4444;
+      --radius: 8px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+    main {
+      width: 100%;
+      max-width: 420px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+    }
+    h1 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin: 0 0 0.5rem;
+      color: var(--text);
+    }
+    p {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin: 0 0 1.25rem;
+      line-height: 1.5;
+    }
+    .field {
+      margin-bottom: 1rem;
+    }
+    label {
+      display: block;
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+    input[type="file"] {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+    input[type="file"]::file-selector-button {
+      margin-right: 0.75rem;
+      padding: 0.35rem 0.6rem;
+      background: var(--border);
+      border: none;
+      border-radius: 4px;
+      color: var(--text);
+      font-family: inherit;
+      cursor: pointer;
+    }
+    button {
+      width: 100%;
+      padding: 0.7rem 1rem;
+      margin-top: 0.5rem;
+      background: var(--accent);
+      color: var(--bg);
+      border: none;
+      border-radius: var(--radius);
+      font-size: 0.85rem;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    button:hover { background: var(--accent-hover); }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .message {
+      margin-top: 1rem;
+      padding: 0.6rem 0.75rem;
+      border-radius: var(--radius);
+      font-size: 0.8rem;
+    }
+    .message.error {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+    }
+    .message.success {
+      background: rgba(34, 197, 94, 0.15);
+      border: 1px solid rgba(34, 197, 94, 0.4);
+      color: #86efac;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h2>VPP Unlocker</h2>
+    <b>Οδηγίες</b>
+    <p>Μέσα από το Visual Paradigm δημιουργήστε ένα καινούριο, άδειο project.
+    Ανεβάστε το άδειο αρχείο VPP στο πρώτο πεδίο της φόρμας και το κλειδωμένο
+    αρχείο στο δεύτερο πεδίο. Το αρχείο που κατεβαίνει πατώντας το κουμπί
+    "Ξεκλείδωμα + Download" θα πρέπει να μπορεί να ανοίξει στο Visual Paradigm
+    χωρίς πρόβλημα</p>
+    <form id="form">
+      <div class="field">
+        <label for="source">Άδειο, ξεκλείδωτο αρχείο VPP</label>
+        <input type="file" id="source" accept=".vpp" required>
+      </div>
+      <div class="field">
+        <label for="target">Κλειδωμένο αρχείο VPP</label>
+        <input type="file" id="target" accept=".vpp" required>
+      </div>
+      <button type="submit" id="submit">Ξεκλείδωμα + Download</button>
+    </form>
+    <div id="message" class="message" role="alert" hidden></div>
+  </main>
+  <script src="https://sql.js.org/dist/sql-wasm.js"></script>
+  <script>
+    (function () {
+      const form = document.getElementById('form');
+      const submitBtn = document.getElementById('submit');
+      const messageEl = document.getElementById('message');
+
+      function showMessage(text, isError) {
+        messageEl.textContent = text;
+        messageEl.className = 'message ' + (isError ? 'error' : 'success');
+        messageEl.hidden = false;
+      }
+
+      function hideMessage() {
+        messageEl.hidden = true;
+      }
+
+      /** Decode DEFINITION blob (UTF-8) to string */
+      function blobToText(blob) {
+        if (!(blob instanceof Uint8Array)) blob = new Uint8Array(blob);
+        return new TextDecoder('utf-8').decode(blob);
+      }
+
+      /** Encode string to UTF-8 Uint8Array for DEFINITION blob */
+      function textToBlob(text) {
+        return new TextEncoder().encode(text);
+      }
+
+      /**
+       * Find the extent of the first "projectStatus={...};" in definition text using brace matching.
+       * Returns { start, end } of the full "projectStatus={...};" segment, or null if not found.
+       */
+      function findProjectStatusSegment(text) {
+        const key = 'projectStatus={';
+        const idx = text.indexOf(key);
+        if (idx === -1) return null;
+        const start = idx;
+        const openBrace = idx + key.length - 1; // index of the '{'
+        let depth = 1;
+        for (let i = openBrace + 1; i < text.length; i++) {
+          const ch = text[i];
+          if (ch === '{') depth++;
+          else if (ch === '}') {
+            depth--;
+            if (depth === 0) {
+              // value ends at this '}'; the assignment ends with "};"
+              const endSemi = text.indexOf(';', i);
+              const end = endSemi !== -1 ? endSemi + 1 : i + 1;
+              return { start, end };
+            }
+          }
+        }
+        return null;
+      }
+
+      /** Extract the full "projectStatus={...};" string from definition text, or null */
+      function extractProjectStatus(definitionText) {
+        const seg = findProjectStatusSegment(definitionText);
+        if (!seg) return null;
+        return definitionText.slice(seg.start, seg.end);
+      }
+
+      /** Replace projectStatus in definitionText with newProjectStatusStr (full "projectStatus={...};"). */
+      function replaceProjectStatus(definitionText, newProjectStatusStr) {
+        const seg = findProjectStatusSegment(definitionText);
+        if (!seg) return null;
+        return definitionText.slice(0, seg.start) + newProjectStatusStr + definitionText.slice(seg.end);
+      }
+
+      function readFile(file) {
+        return new Promise((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(new Uint8Array(r.result));
+          r.onerror = () => reject(new Error('Failed to read file: ' + file.name));
+          r.readAsArrayBuffer(file);
+        });
+      }
+
+      function downloadBlob(data, filename) {
+        const blob = new Blob([data], { type: 'application/octet-stream' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        hideMessage();
+        const sourceFile = document.getElementById('source').files[0];
+        const targetFile = document.getElementById('target').files[0];
+        if (!sourceFile || !targetFile) {
+          showMessage('Please choose both source and target .vpp files.', true);
+          return;
+        }
+
+        submitBtn.disabled = true;
+        try {
+          const SQL = await initSqlJs({ locateFile: (file) => 'https://sql.js.org/dist/' + file });
+          const sourceBytes = await readFile(sourceFile);
+          const targetBytes = await readFile(targetFile);
+
+          const sourceDb = new SQL.Database(sourceBytes);
+          const targetDb = new SQL.Database(targetBytes);
+
+          const sourceRow = sourceDb.exec('SELECT DEFINITION FROM PROJECT_INFO LIMIT 1');
+          const targetRow = targetDb.exec('SELECT DEFINITION FROM PROJECT_INFO LIMIT 1');
+
+          if (!sourceRow.length || !sourceRow[0].values.length) {
+            sourceDb.close();
+            targetDb.close();
+            showMessage('Source file has no PROJECT_INFO row.', true);
+            return;
+          }
+          if (!targetRow.length || !targetRow[0].values.length) {
+            sourceDb.close();
+            targetDb.close();
+            showMessage('Target file has no PROJECT_INFO row.', true);
+            return;
+          }
+
+          const sourceDef = sourceRow[0].values[0][0];
+          const targetDef = targetRow[0].values[0][0];
+
+          const sourceText = blobToText(sourceDef);
+          const targetText = blobToText(targetDef);
+
+          const projectStatusFromSource = extractProjectStatus(sourceText);
+          if (!projectStatusFromSource) {
+            sourceDb.close();
+            targetDb.close();
+            showMessage('Source file DEFINITION has no projectStatus property.', true);
+            return;
+          }
+
+          const newTargetText = replaceProjectStatus(targetText, projectStatusFromSource);
+          if (newTargetText === null) {
+            sourceDb.close();
+            targetDb.close();
+            showMessage('Target file DEFINITION has no projectStatus property to replace.', true);
+            return;
+          }
+
+          const newDefBlob = textToBlob(newTargetText);
+          targetDb.run('UPDATE PROJECT_INFO SET DEFINITION = ?', [newDefBlob]);
+
+          const exported = targetDb.export();
+          sourceDb.close();
+          targetDb.close();
+
+          const baseName = targetFile.name.replace(/\.vpp$/i, '') || 'modified';
+          downloadBlob(exported, baseName + '_projectstatus.vpp');
+          showMessage('Done. Modified file downloaded as "' + baseName + '_projectstatus.vpp".', false);
+        } catch (err) {
+          console.error(err);
+          showMessage(err.message || 'An error occurred.', true);
+        } finally {
+          submitBtn.disabled = false;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
