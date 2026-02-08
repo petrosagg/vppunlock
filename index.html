@@ -288,8 +288,8 @@
           targetDb.close();
 
           const baseName = targetFile.name.replace(/\.vpp$/i, '') || 'modified';
-          downloadBlob(exported, baseName + '_projectstatus.vpp');
-          showMessage('Done. Modified file downloaded as "' + baseName + '_projectstatus.vpp".', false);
+          downloadBlob(exported, baseName + '_unlocked.vpp');
+          showMessage('Done. Modified file downloaded as "' + baseName + '_unlocked.vpp".', false);
         } catch (err) {
           console.error(err);
           showMessage(err.message || 'An error occurred.', true);
